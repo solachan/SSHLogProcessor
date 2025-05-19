@@ -16,11 +16,11 @@ SSHLogProcessor 是一个通过 SSH 连接到远程服务器，读取日志文�
 
 确保已安装 JDK，然后使用以下命令编译项目：
 
-
 bash 
 ```
 mvn clean package
 ```
+得到jar包：SSHLogProcessor-1.0-SNAPSHOT.jar
 
 ### 2. 运行程序
 
