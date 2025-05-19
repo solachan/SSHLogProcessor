@@ -76,5 +76,5 @@ utf-8编码，字段分隔符为竖线，记录分隔符为分号。字段内容
 
 bash 
 ``` 
-java org.example.SSHLogProcessor 192.168.1.100 22 user password 
+java SSHLogProcessor-1.0-SNAPSHOT.jar 192.168.1.100 22 user password 
 ```
