@@ -19,7 +19,7 @@ SSHLogProcessor 是一个通过 SSH 连接到远程服务器，读取日志文�
 
 bash 
 ```
-javac -d . src/main/java/org/example/SSHLogProcessor.java
+mvn clean package
 ```
 
 ### 2. 运行程序
@@ -28,7 +28,7 @@ javac -d . src/main/java/org/example/SSHLogProcessor.java
 
 bash
 ```
-java org.example.SSHLogProcessor <remoteIP> <port> <username> <password>
+java -jar SSHLogProcessor-1.0-SNAPSHOT.jar <remoteIP> <port> <username> <password>
 ```
 
 #### 参数说明
