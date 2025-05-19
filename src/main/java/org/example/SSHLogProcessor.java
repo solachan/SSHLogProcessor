@@ -7,9 +7,7 @@ import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CoderResult;
 import java.nio.charset.StandardCharsets;
 import java.text.SimpleDateFormat;
-import java.util.ArrayList;
 import java.util.Date;
-import java.util.List;
 import java.util.concurrent.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -26,6 +24,7 @@ public class SSHLogProcessor {
     private static final int MAX_ITERATIONS = 10000; // 最大执行次数
     private static final int PRINT_MEMORY_INTERVAL = 1000; // 打印内存间隔
     private static final int MAX_RETRY_COUNT = 3; // 最大重试次数
+    private static final int MAX_FIELD_LENGTH = 32767; // 最大字段长度
 
 
     /**
@@ -46,40 +45,16 @@ public class SSHLogProcessor {
 
         ExecutorService executor = Executors.newFixedThreadPool(THREAD_POOL_SIZE);
 
-        //打印缓冲区和IO缓冲字符串大小
-        System.out.println("max Buffer size: " + MAX_BUFFER_SIZE/1024/1024 + " MB");
-        System.out.println("IO Buffer size: " + IO_BUFFER_SIZE/1024/1024 + " MB");
-        // 总耗时
-        long duration = 0;
-        List<Long> executionTimes = new ArrayList<>(); // 存储每次迭代的耗时
-
         // 循环执行日志处理任务，直到达到最大执行次数
         for (int i = 0; i < MAX_ITERATIONS; i++) {
             try {
-                long startTime = System.currentTimeMillis();
                 processLog(remoteIP, port, username, password, executor);
-                long endTime = System.currentTimeMillis();
-                long iterationTime = endTime - startTime;
-                executionTimes.add(iterationTime); // 记录每次迭代的耗时
-                System.out.println("Iteration " + (i + 1) + ": Execution time = " + iterationTime + " ms");
                 if ((i + 1) % PRINT_MEMORY_INTERVAL == 0) {
                     printMemoryUsage();
                 }
             } catch (Exception e) {
                 e.printStackTrace();
             }
-        }
-
-        // 去掉一个最高耗时和一个最低耗时，计算平均耗时
-        if (executionTimes.size() >= 3) { // 至少需要3次迭代才能去掉最高和最低
-            executionTimes.sort(Long::compareTo); // 对耗时进行排序
-            executionTimes.remove(0); // 去掉最低耗时
-            executionTimes.remove(executionTimes.size() - 1); // 去掉最高耗时
-            long totalTime = executionTimes.stream().mapToLong(Long::longValue).sum(); // 计算剩余耗时的总和
-            long averageTime = totalTime / executionTimes.size(); // 计算平均耗时
-            System.out.println("Average execution time (去掉最高和最低耗时): " + averageTime + " ms");
-        } else {
-            System.out.println("迭代次数不足，无法去掉最高和最低耗时");
         }
 
         executor.shutdown();
@@ -99,29 +74,42 @@ public class SSHLogProcessor {
     private static void processLog(String remoteIP, int port, String username, String password, ExecutorService executor)
             throws JSchException, IOException {
         int retryCount = 0;
+        // 循环重试
         while (retryCount < MAX_RETRY_COUNT) {
             try {
+                // 初始化JSch对象
                 JSch jsch = new JSch();
+                // 创建会话
                 Session session = jsch.getSession(username, remoteIP, port);
                 session.setPassword(password);
+                // 设置不严格检查主机密钥
                 session.setConfig("StrictHostKeyChecking", "no");
+                // 连接会话
                 session.connect();
 
+                // 创建执行通道
                 ChannelExec channel = (ChannelExec) session.openChannel("exec");
+                // 设置要执行的命令
                 channel.setCommand("cat test.log");
+                // 设置输入流和错误流
                 channel.setInputStream(null);
                 channel.setErrStream(System.err);
 
+                // 获取输出流
                 InputStream in = channel.getInputStream();
+                // 连接通道
                 channel.connect();
 
+                // 处理日志内容
                 processLogContent(in, executor);
 
+                // 断开通道和会话连接
                 channel.disconnect();
                 session.disconnect();
                 break; // 成功执行后退出循环
             } catch (JSchException | IOException e) {
                 retryCount++;
+                // 判断是否达到最大重试次数
                 if (retryCount >= MAX_RETRY_COUNT) {
                     System.out.println("重试失败，抛出异常");
                     throw e; // 达到最大重试次数后抛出异常
@@ -187,14 +175,19 @@ public class SSHLogProcessor {
                             future.get();
                         }
 
+                        // 提交消费者线程处理记录
                         future = (Future<Void>) executor.submit(() -> processRecords(records, records.length-1,csvWriter, invalidWriter));
-//                        processRecords(records, records.length-1,csvWriter, invalidWriter);
                     } else {
                         throw new IOException("Buffer size exceeded without record separator.");
                     }
                 }
 
                 byteBuffer.compact(); // 切换到写模式，保留未处理的字节
+            }
+
+            // 等待消费者线程处理完缓冲区数据，避免还有数据没有处理完成就已经退出
+            if (future != null) {
+                future.get();
             }
 
             // 处理最后一条记录
@@ -204,11 +197,9 @@ public class SSHLogProcessor {
                 String[] records = recordBuilder.toString().split("(?<!\\\\);");
 //                future = (Future<Void>) executor.submit(() -> processRecords(records, records.length, csvWriter, invalidWriter));
 //                future.get();
+                //最后的数据不需要异步处理，因为数据已经获取完毕
                 processRecords(records, records.length, csvWriter, invalidWriter);
             }
-
-//            System.out.println("recordCount:"+recordCount);
-//            System.out.println("size:"+size);
 
         } catch (IOException | InterruptedException e) {
             e.printStackTrace();
@@ -220,29 +211,52 @@ public class SSHLogProcessor {
     }
 
 
+    /**
+     * 处理记录并将其写入有效的CSV文件和无效记录文件
+     *
+     * @param records    待处理的记录数组
+     * @param size       记录数组的大小
+     * @param csvWriter  用于写入CSV文件的BufferedWriter对象
+     * @param invalidWriter  用于写入无效记录文件的BufferedWriter对象
+     */
     private static void processRecords(String[] records, int size,BufferedWriter csvWriter, BufferedWriter invalidWriter) {
+        // 构建有效的记录字符串
         StringBuilder recordBuilder = new StringBuilder();
+        // 构建无效的记录字符串
         StringBuilder invalidBuilder = new StringBuilder();
+
+        // 遍历记录数组
         for (int i = 0; i < records.length && i < size; i++) {
+            // 分割记录为字段, 使用正则表达式匹配字段分隔符,分隔时不省略尾部空字符串
             String[] fields = records[i].split("(?<!\\\\)\\|", -1);
+
+            // 检查字段有效性
+            // 1、字段数是否只有3个
+            // 2、Excel中，一个单元格最多可以包含32,767个字符
             if (fields.length == 3 &&
-                    fields[0] != null && fields[0].length() <= 32767 &&
-                    fields[1] != null && fields[1].length() <= 32767) {
+                    fields[0] != null && isValidTimestamp(fields[0]) &&
+                    fields[1] != null && fields[1].length() <= MAX_FIELD_LENGTH &&
+                    fields[2] != null && fields[2].length() <= MAX_FIELD_LENGTH
+            ) {
+                // 格式化时间戳
                 String timestamp = formatTimestamp(fields[0]);
+                // 获取操作类型
                 String operation = fields[2];
-                recordBuilder.append(timestamp + ",\"" + operation + "\"\n");
+                // 构建有效记录字符串
+                recordBuilder.append(timestamp).append(",\"").append(operation).append("\"\n");
             } else {
                 // 无效记录：写入无效记录文件
-                String invalidReason = getInvalidReason(fields); // 获取无效原因
-                invalidBuilder.append("原始记录: " + records[i] + "\n");
-                invalidBuilder.append("无效原因: " + invalidReason + "\n");
+                // 获取无效原因
+                String invalidReason = getInvalidReason(fields);
+                // 构建无效记录字符串
+                invalidBuilder.append("原始记录: ").append(records[i]).append("\n");
+                invalidBuilder.append("无效原因: ").append(invalidReason).append("\n");
                 invalidBuilder.append("------------------\n"); // 分隔符
             }
 
             // 批量写入
             if (recordBuilder.length() >= IO_BUFFER_SIZE) {
                 writeBatch(csvWriter, recordBuilder);
-
             }
             if (invalidBuilder.length() >= IO_BUFFER_SIZE) {
                 writeBatch(invalidWriter, invalidBuilder);
@@ -258,6 +272,22 @@ public class SSHLogProcessor {
     }
 
     /**
+     * 检查时间戳是否有效。
+     *
+     * @param timestamp 时间戳
+     * @return 时间戳是否有效
+     */
+    private static boolean isValidTimestamp(String timestamp) {
+        try {
+            Long.parseLong(timestamp);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
+    }
+
+
+    /**
      * 获取无效记录的原因。
      *
      * @param fields 记录字段
@@ -267,11 +297,14 @@ public class SSHLogProcessor {
         if (fields.length != 3) {
             return "字段数量不符，应为 3 个字段，实际为 " + fields.length + " 个字段";
         }
-        if (fields[0] == null || fields[0].length() > 32767) {
-            return "字段 1（时间戳）无效：为空或长度超过 32767 字符";
+        if (fields[0] == null || !isValidTimestamp(fields[0])) {
+            return "字段 1（时间戳）无效：时间戳无效";
         }
-        if (fields[1] == null || fields[1].length() > 32767) {
-            return "字段 2（操作）无效：为空或长度超过 32767 字符";
+        if (fields[1] != null && fields[1].length() > MAX_FIELD_LENGTH) {
+            return "字段 2（操作者）无效：长度超过 " + MAX_FIELD_LENGTH + " 个字符";
+        }
+        if (fields[2] != null && fields[2].length() > MAX_FIELD_LENGTH) {
+            return "字段 3（操作内容）无效：长度超过 " + MAX_FIELD_LENGTH + " 个字符";
         }
         return "未知原因";
     }
@@ -285,31 +318,6 @@ public class SSHLogProcessor {
             throw new RuntimeException(e);
         }
     }
-
-    private static void processRecord(String record, BufferedWriter csvWriter, BufferedWriter invalidWriter) {
-        // 按字段分隔符分割记录
-        String[] fields = record.split("(?<!\\\\)\\|",-1);
-
-        // 判断是否为有效记录
-        synchronized (csvWriter) {
-            try {
-                //excel单元格长度最大为32767个字符
-                if (fields.length == 3 &&
-                        fields[0] != null && fields[0].length() <= 32767 &&
-                        fields[1] != null && fields[1].length() <= 32767
-                ) {
-                    String timestamp = formatTimestamp(fields[0]);
-                    String operation = fields[2];
-                    csvWriter.write(timestamp + ",\"" + operation + "\"\n");
-                } else {
-                    invalidWriter.write(record + "\n");
-                }
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-        }
-    }
-
 
     /**
      * 将时间戳格式化为可读的日期时间字符串。

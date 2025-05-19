@@ -10,6 +10,9 @@ import java.util.Date;
 import java.util.List;
 import java.util.Random;
 
+/**
+ * 生成测试文本文件
+ */
 public class GenerateTextFile {
 
     private static final List<String> OPERATORS = Arrays.asList("张三", "李四", "王五", "赵六", "孙七", "周八", "吴九", "郑十");
