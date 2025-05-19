@@ -109,7 +109,8 @@ public class SSHLogProcessor {
                 channel.disconnect();
                 session.disconnect();
                 break; // 成功执行后退出循环
-            } catch (JSchException | IOException e) {
+            } catch (Exception e) {
+                e.printStackTrace();
                 // 判断是否达到最大重试次数
                 if (retryCount < MAX_RETRY_COUNT) {
                     retryCount++;
@@ -126,8 +127,8 @@ public class SSHLogProcessor {
     /**
      * 处理日志内容，将有效记录写入CSV文件，无效记录写入文本文件。
      *
-     * @param logStream
-     * @param executor
+     * @param logStream 日志输入流，包含从远程服务器读取的日志数据
+     * @param executor 用于异步处理日志内容的线程池
      */
     private static void processLogContent(InputStream logStream, ExecutorService executor) {
         StringBuilder recordBuilder = new StringBuilder();
@@ -143,7 +144,7 @@ public class SSHLogProcessor {
         try (BufferedWriter csvWriter = new BufferedWriter(new FileWriter("test.csv"));
              BufferedWriter invalidWriter = new BufferedWriter(new FileWriter("invalid_records.txt"))) {
 
-            Future<Void> future = null;
+            Future<?> future = null;
             while ((bytesRead = logStream.read(buffer)) != -1) {
                 // 将字节数据放入 ByteBuffer
                 byteBuffer.put(buffer, 0, bytesRead);
@@ -178,7 +179,7 @@ public class SSHLogProcessor {
                         }
 
                         // 提交消费者线程处理记录
-                        future = (Future<Void>) executor.submit(() -> processRecords(records, records.length-1,csvWriter, invalidWriter));
+                        future = executor.submit(() -> processRecords(records, records.length-1,csvWriter, invalidWriter));
                     } else {
                         throw new IOException("Buffer size exceeded without record separator.");
                     }
@@ -194,7 +195,6 @@ public class SSHLogProcessor {
 
             // 处理最后一条记录
             if (recordBuilder.length() > 0) {
-                StringBuilder finalRecordBuilder = recordBuilder;
                 // 按记录分隔符分割日志内容
                 String[] records = recordBuilder.toString().split("(?<!\\\\);");
 //                future = (Future<Void>) executor.submit(() -> processRecords(records, records.length, csvWriter, invalidWriter));
@@ -222,9 +222,9 @@ public class SSHLogProcessor {
      * @param invalidWriter  用于写入无效记录文件的BufferedWriter对象
      */
     private static void processRecords(String[] records, int size,BufferedWriter csvWriter, BufferedWriter invalidWriter) {
-        // 构建有效的记录字符串
+        // 构建有效记录字符串
         StringBuilder recordBuilder = new StringBuilder();
-        // 构建无效的记录字符串
+        // 构建无效记录字符串
         StringBuilder invalidBuilder = new StringBuilder();
 
         // 遍历记录数组
