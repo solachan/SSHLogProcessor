@@ -49,10 +49,12 @@ public class SSHLogProcessor {
         for (int i = 0; i < MAX_ITERATIONS; i++) {
             try {
                 processLog(remoteIP, port, username, password, executor);
+                System.out.println("日志处理完成 , 第" + (i + 1) + "次");
                 if ((i + 1) % PRINT_MEMORY_INTERVAL == 0) {
                     printMemoryUsage();
                 }
             } catch (Exception e) {
+                System.out.println("日志处理失败 , 第" + (i + 1) + "次");
                 e.printStackTrace();
             }
         }
