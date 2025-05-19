@@ -77,7 +77,7 @@ public class SSHLogProcessor {
             throws JSchException, IOException {
         int retryCount = 0;
         // 循环重试
-        while (retryCount < MAX_RETRY_COUNT) {
+        while (true) {
             try {
                 // 初始化JSch对象
                 JSch jsch = new JSch();
@@ -110,13 +110,13 @@ public class SSHLogProcessor {
                 session.disconnect();
                 break; // 成功执行后退出循环
             } catch (JSchException | IOException e) {
-                retryCount++;
                 // 判断是否达到最大重试次数
-                if (retryCount >= MAX_RETRY_COUNT) {
+                if (retryCount < MAX_RETRY_COUNT) {
+                    retryCount++;
+                    System.out.println("连接失败，重试中... (" + retryCount + "/" + MAX_RETRY_COUNT + ")");
+                }else {
                     System.out.println("重试失败，抛出异常");
                     throw e; // 达到最大重试次数后抛出异常
-                }else {
-                    System.out.println("连接失败，重试中... (" + retryCount + "/" + MAX_RETRY_COUNT + ")");
                 }
             }
         }
